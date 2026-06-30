@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, Query
+from fastapi import FastAPI, Depends, Query, Header, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy.orm import Session
@@ -9,6 +9,19 @@ import models
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Pesquisa Aberta Brasil API")
+
+# ---------- AUTH DEPENDENCY ----------
+def get_current_user(authorization: str = Header(None), db: Session = Depends(get_db)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing token")
+
+    token = authorization.replace("Bearer ", "")
+    user = db.query(models.User).filter(models.User.id == token).first()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    return user
 
 # ---------- Schemas ----------
 class UserCreate(BaseModel):
@@ -56,15 +69,20 @@ def login(user: UserCreate, db: Session = Depends(get_db)):
     if not db_user or db_user.password != user.password:
         return {"error": "invalid credentials"}
 
-    return {"message": "login successful", "user_id": db_user.id}
+    return {"message": "login successful", "token": db_user.id}
 
-# ---------- ARTICLES ----------
+# ---------- ARTICLES (PROTECTED) ----------
 @app.post("/articles", response_model=ArticleOut)
-def create_article(article: ArticleCreate, db: Session = Depends(get_db)):
+def create_article(
+    article: ArticleCreate,
+    db: Session = Depends(get_db),
+    user: models.User = Depends(get_current_user)
+):
     db_article = models.Article(
         title=article.title,
         content=article.content,
-        author=article.author,
+        author=user.username,
+        user_id=user.id,
         tags=",".join(article.tags) if article.tags else None
     )
     db.add(db_article)
